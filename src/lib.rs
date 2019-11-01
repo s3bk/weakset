@@ -26,7 +26,12 @@ problems:
       to solve this, store the position of the first free slot.
 */
 
-use std::{rc::Rc, cell::RefCell, fmt, ops::Deref};
+use std::{
+    rc::Rc,
+    cell::{RefCell, Ref, RefMut},
+    fmt,
+    ops::Deref
+};
 
 pub struct WeakSet<T> {
     inner: Rc<RefCell<WeakSetInner<T>>>
@@ -49,6 +54,20 @@ pub struct WeakSetEntry<T> {
 struct WeakSetInner<T> {
     slots: Vec<WeakSetSlot<T>>,
     first_free: usize
+}
+impl<T> WeakSetInner<T> {
+    fn slot(&self, index: usize) -> Option<&T> {
+        match self.slots[index] {
+            WeakSetSlot::Empty => None,
+            WeakSetSlot::Used(ref val, _) => Some(val)
+        }
+    }
+    fn slot_mut(&mut self, index: usize) -> Option<&mut T> {
+        match self.slots[index] {
+            WeakSetSlot::Empty => None,
+            WeakSetSlot::Used(ref mut val, _) => Some(val)
+        }
+    }
 }
 
 // this isn't `Option<(T, usize)>` because we might want to add information to `Empty`.
@@ -167,6 +186,18 @@ impl<T> Clone for WeakSetEntry<T> {
     }
 }
 
+impl<T> WeakSetEntry<T> {
+    /// borrow the value stored in the set
+    pub fn borrow(&self) -> Ref<T> {
+        Ref::map(self.set.inner.borrow(), |inner| inner.slot(self.index).unwrap())
+    }
+
+    /// mutably borrow the value stored in the set
+    pub fn borrow_mut(&self) -> RefMut<T> {
+        RefMut::map(self.set.inner.borrow_mut(), |inner| inner.slot_mut(self.index).unwrap())
+    }
+}
+
 impl<T: fmt::Debug> fmt::Debug for WeakSet<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // this debug impl does not create references. 
@@ -183,22 +214,6 @@ impl<T: fmt::Debug> fmt::Debug for WeakSetSlot<T> {
             WeakSetSlot::Empty => write!(f, "empty"),
             WeakSetSlot::Used(ref val, refcount) => write!(f, "{:?}({})", val, refcount)
         }
-    }
-}
-
-impl<T> Deref for WeakSetEntry<Box<T>> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        // we hold a reference to the item as well as the container
-        // the item is stored in a Box, so even if a new item was insered
-        // into the set causing a reallocation, the reference remains valid
-        let ptr = match self.set.inner.borrow().slots[self.index] {
-            WeakSetSlot::Used(ref val, _) => (&**val) as *const T,
-            _ => unreachable!()
-        };
-
-        // extend the lifetime
-        unsafe { &*ptr }
     }
 }
 
