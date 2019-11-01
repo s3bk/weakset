@@ -29,8 +29,7 @@ problems:
 use std::{
     rc::Rc,
     cell::{RefCell, Ref, RefMut},
-    fmt,
-    ops::Deref
+    fmt
 };
 
 pub struct WeakSet<T> {
