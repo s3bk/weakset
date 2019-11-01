@@ -17,6 +17,11 @@ observations:
 decisions: 
     - deletion sets entries to "empty" (avoids double references)
     - store values directly. the user can use WeakSet<Box<T>> to change this
+
+problems: 
+    - insertion will be fairly terrible when looking for new slots at position 0.
+      to solve this, store the position of the first free slot
+});
 */
 
 use std::rc::Rc;
@@ -41,7 +46,8 @@ pub struct WeakSetEntry<T> {
 }
 
 struct WeakSetInner<T> {
-    slots: Vec<WeakSetSlot<T>>
+    slots: Vec<WeakSetSlot<T>>,
+    first_free: usize
 }
 
 // this isn't `Option<(T, usize)>` because we might want to add information to `Empty`.
@@ -58,7 +64,7 @@ enum WeakSetSlot<T> {
 impl<T> WeakSet<T> {
     pub fn new() -> WeakSet<T> {
         WeakSet {
-            inner: Rc::new(RefCell::new(WeakSetInner { slots: Vec::new() })) 
+            inner: Rc::new(RefCell::new(WeakSetInner { slots: Vec::new(), first_free: 0 })) 
         }
     }
 
@@ -69,15 +75,20 @@ impl<T> WeakSet<T> {
         let mut inner = self.inner.borrow_mut();
         
         // try to find a 'Free' slot first, otherwise add one
-        let slot_idx = inner.slots.iter().position(|slot|
+        let slot_idx = inner.slots.iter()
+        .skip(inner.first_free)
+        .position(|slot|
             match slot {
                 WeakSetSlot::Empty => true,
                 _ => false
             }
-        ).unwrap_or_else(|| {
+        )
+        .map(|off| inner.first_free + off)
+        .unwrap_or_else(|| {
             inner.slots.push(WeakSetSlot::Empty);
             inner.slots.len() - 1
         });
+        inner.first_free = slot_idx + 1;
 
         // construct an entry with one reference
         let new_slot = WeakSetSlot::Used(val, 1);
@@ -109,8 +120,9 @@ impl<T> WeakSet<T> {
 
     // decrease the refcount of the given entry, possibly dropping it
     fn drop_entry(&self, index: usize) {
+        let mut inner = self.inner.borrow_mut();
         // get a reference to the slot
-        let ref mut slot = self.inner.borrow_mut().slots[index];
+        let ref mut slot = inner.slots[index];
         let is_empty = match slot {
             &mut WeakSetSlot::Used(_, ref mut refcount) => {
                 // decrement the refcount and see if it is zero
@@ -123,6 +135,9 @@ impl<T> WeakSet<T> {
         // if it is empty now, set the slot to empty (dropping the value in the process)
         if is_empty {
             *slot = WeakSetSlot::Empty;
+            if index < inner.first_free {
+                inner.first_free = index;
+            }
         }
     }
 
