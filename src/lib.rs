@@ -1,31 +1,32 @@
 /*
+🙚 WeakSet 🙘
+
 requirements:
     - owned storage
     - iteration over the items
     - immediate deltion of dropped items
+
 optional:
     - fast iteration
     - continuous memory
 
-observations: 
+observations:
     - the set owns the values, so they cannot be inserted in another set
     - the references need to reference the set in order to remove the items on drop
     - the set itself needs to be reference counted in case it is dropped while references are alive
     - it is a set, so the storage can be a Vec and the indices used to reference entries.
     - we need interior mutabiltiy as the set is shared
 
-decisions: 
+decisions:
     - deletion sets entries to "empty" (avoids double references)
     - store values directly. the user can use WeakSet<Box<T>> to change this
 
-problems: 
+problems:
     - insertion will be fairly terrible when looking for new slots at position 0.
-      to solve this, store the position of the first free slot
-});
+      to solve this, store the position of the first free slot.
 */
 
-use std::rc::Rc;
-use std::cell::RefCell;
+use std::{rc::Rc, cell::RefCell, fmt, ops::Deref};
 
 pub struct WeakSet<T> {
     inner: Rc<RefCell<WeakSetInner<T>>>
@@ -166,28 +167,6 @@ impl<T> Clone for WeakSetEntry<T> {
     }
 }
 
-use std::fmt;
-/*
-old debug impl
-problem: 
-    the debug print creates an iterator which creates additional references to each item
-    so we get higher numbers…
-
-impl<T: fmt::Debug> fmt::Debug for WeakSetEntry<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.set.inner.borrow().slots[self.index] {
-            WeakSetSlot::Empty => write!(f, "free"),
-            WeakSetSlot::Used(ref val, refcount) => write!(f, "{:?}({})", val, refcount)
-        }
-    }
-}
-impl<T: fmt::Debug> fmt::Debug for WeakSet<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_set().entries(self.iter()).finish()
-    }
-}
-*/
-
 impl<T: fmt::Debug> fmt::Debug for WeakSet<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // this debug impl does not create references. 
@@ -204,6 +183,22 @@ impl<T: fmt::Debug> fmt::Debug for WeakSetSlot<T> {
             WeakSetSlot::Empty => write!(f, "empty"),
             WeakSetSlot::Used(ref val, refcount) => write!(f, "{:?}({})", val, refcount)
         }
+    }
+}
+
+impl<T> Deref for WeakSetEntry<Box<T>> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // we hold a reference to the item as well as the container
+        // the item is stored in a Box, so even if a new item was insered
+        // into the set causing a reallocation, the reference remains valid
+        let ptr = match self.set.inner.borrow().slots[self.index] {
+            WeakSetSlot::Used(ref val, _) => (&**val) as *const T,
+            _ => unreachable!()
+        };
+
+        // extend the lifetime
+        unsafe { &*ptr }
     }
 }
 
